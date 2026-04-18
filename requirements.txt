@@ -1,1 +1,6 @@
--r backend/requirements.txt
+# Vercel Python serverless only (ASGI is served by the platform; no uvicorn).
+fastapi
+python-multipart
+pydantic
+groq
+python-dotenv
