@@ -59,12 +59,22 @@ export default function App() {
         })
           .then(() => setApiKeyConfigured(true))
           .catch(() => {});
-      } else {
-        setSettingsOpen(true);
+        return;
       }
     } catch {
-      setSettingsOpen(true);
+      // fall through to env-var check
     }
+    // No key in localStorage — check if backend already has one via env var.
+    fetch(`${API_URL}/config`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.groq_api_key_set) {
+          setApiKeyConfigured(true); // env var present, no need to prompt
+        } else {
+          setSettingsOpen(true);
+        }
+      })
+      .catch(() => setSettingsOpen(true));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const flashTopicShiftBanner = (label) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 function MicIcon({ pulsing }) {
   return (
@@ -32,6 +32,7 @@ export default function TranscriptPanel({
   onToggleRecording,
 }) {
   const [elapsed, setElapsed] = useState(0);
+  const bottomRef = useRef(null);
 
   const speechSupported =
     typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -45,6 +46,10 @@ export default function TranscriptPanel({
     const id = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => window.clearInterval(id);
   }, [isRecording]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [transcript, previewText]);
 
   const hasContent = finalTranscript || previewText || transcript.length > 0;
 
@@ -117,6 +122,7 @@ export default function TranscriptPanel({
             <div>{item.text}</div>
           </div>
         ))}
+        <div ref={bottomRef} className="h-px w-full shrink-0" aria-hidden />
       </div>
     </div>
   );
