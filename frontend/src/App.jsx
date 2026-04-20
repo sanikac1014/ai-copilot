@@ -167,9 +167,7 @@ export default function App() {
     const userMsg = { role: "user", content: message, timestamp: toTimestamp() };
     setChat((prev) => [...prev, userMsg]);
     setChatLoading(true);
-
-    // Add empty streaming placeholder immediately so the cursor appears right away.
-    setChat((prev) => [...prev, { role: "assistant", content: "", timestamp: "", streaming: true }]);
+    // No empty bubble here — typing indicator covers the wait; bubble is created on first delta.
 
     try {
       const res = await fetch(`${API_URL}/chat`, {
@@ -207,7 +205,11 @@ export default function App() {
               const next = [...prev];
               const last = next[next.length - 1];
               if (last?.role === "assistant") {
+                // Subsequent deltas: append to existing bubble.
                 next[next.length - 1] = { ...last, content: last.content + evt.text, streaming: true };
+              } else {
+                // First delta: create the assistant bubble now (replaces typing indicator).
+                next.push({ role: "assistant", content: evt.text, timestamp: "", streaming: true });
               }
               return next;
             });

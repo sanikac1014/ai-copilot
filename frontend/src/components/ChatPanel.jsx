@@ -15,10 +15,8 @@ export default function ChatPanel({ chat, onSend, loading }) {
   };
 
   const last = chat[chat.length - 1];
+  // Typing indicator shows while loading and no assistant bubble exists yet (waiting for first token).
   const typingAfterUser = Boolean(loading && last?.role === "user");
-  const streamingEmpty = Boolean(
-    loading && last?.role === "assistant" && last?.streaming && !(last?.content && String(last.content).length)
-  );
 
   return (
     <div className="flex h-full min-h-[70vh] flex-col rounded-xl border border-blue-900/35 bg-slate-900/90 p-4 shadow-lg shadow-blue-950/20">
@@ -58,7 +56,7 @@ export default function ChatPanel({ chat, onSend, loading }) {
             </div>
           </div>
         ))}
-        {(typingAfterUser || streamingEmpty) && (
+        {typingAfterUser && (
           <div className="flex items-center gap-2 rounded-lg border border-orange-500/25 bg-slate-800/80 px-3 py-2.5 text-sm text-slate-300 shadow-sm">
             <span className="font-medium text-slate-200">Assistant is typing</span>
             <span className="flex items-center gap-1.5">
