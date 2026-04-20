@@ -21,9 +21,10 @@ router = APIRouter()
 
 
 def _sync_session_segments(context, topic_shift: bool) -> None:
-    """Maintain session_segments; on topic_shift close prior segment with narrative and open a new one."""
+    """Maintain session_segments; on topic_shift close prior segment and open a new one."""
     prev_focus = STATE.last_primary_focus
     prev_type = STATE.last_conversation_type
+    opening = segment_opening_summary(context)[:650]
 
     if not STATE.session_segments:
         STATE.session_segments.append(
@@ -31,10 +32,12 @@ def _sync_session_segments(context, topic_shift: bool) -> None:
                 "id": 0,
                 "topic": context.primary_focus,
                 "conversation_type": context.conversation_type,
-                "summary": segment_opening_summary(context)[:650],
+                "summary": opening,
             }
         )
         STATE.current_segment_id = 0
+        STATE.current_segment_start_idx = 0
+        STATE.current_segment_rolling_summary = opening
         return
 
     if topic_shift:
@@ -52,17 +55,22 @@ def _sync_session_segments(context, topic_shift: bool) -> None:
                 "id": new_id,
                 "topic": context.primary_focus,
                 "conversation_type": context.conversation_type,
-                "summary": segment_opening_summary(context)[:650],
+                "summary": opening,
             }
         )
         STATE.current_segment_id = new_id
+        # New segment starts at the 2 entries that triggered the shift (they belong to new topic).
+        STATE.current_segment_start_idx = max(0, len(STATE.transcript_entries) - 2)
+        STATE.current_segment_rolling_summary = opening
         if len(STATE.session_segments) > 50:
             STATE.session_segments = STATE.session_segments[-50:]
     else:
         cur = STATE.session_segments[-1]
         cur["topic"] = context.primary_focus
         cur["conversation_type"] = context.conversation_type
-        cur["summary"] = segment_opening_summary(context)[:650]
+        cur["summary"] = opening
+        # Keep segment summary fresh with current topic only — no prior-segment bleed.
+        STATE.current_segment_rolling_summary = (context.summary or opening).strip()[:650]
 
 
 def _rollup_rolling_summary(context, topic_shift: bool, prev_focus: str, prev_type: str) -> None:
@@ -110,24 +118,30 @@ async def transcribe(file: UploadFile = File(...)):
 async def suggestions(payload: SuggestionRequest):
     started_at = time.perf_counter()
     STATE.transcript_entries = payload.transcript_entries or STATE.transcript_entries
-    signature = _signature(STATE.transcript_entries)
+
+    # Isolate to current segment: ignore entries that pre-date the last topic shift.
+    segment_entries = STATE.transcript_entries[STATE.current_segment_start_idx:]
+    if not segment_entries:
+        segment_entries = STATE.transcript_entries[-4:]
+
+    segment_sig = _signature(segment_entries)
     bypass_cache = bool(payload.force_refresh)
     if (
         STATE.last_context
-        and signature
-        and signature == STATE.last_transcript_signature
+        and segment_sig
+        and segment_sig == STATE.last_transcript_signature
         and not bypass_cache
     ):
         context = STATE.last_context
     else:
         context = build_structured_context(
-            STATE.transcript_entries,
-            STATE.rolling_summary,
+            segment_entries,
+            STATE.current_segment_rolling_summary,
             last_primary_focus=STATE.last_primary_focus,
             last_conversation_type=STATE.last_conversation_type,
         )
         STATE.last_context = context
-        STATE.last_transcript_signature = signature
+        STATE.last_transcript_signature = segment_sig
 
     topic_shift = bool(context.topic_shift)
     prev_focus = STATE.last_primary_focus
@@ -264,15 +278,18 @@ async def suggestions(payload: SuggestionRequest):
 @router.post("/chat")
 async def chat(payload: ChatRequest):
     STATE.transcript_entries = payload.transcript_entries or STATE.transcript_entries
-    signature = _signature(STATE.transcript_entries)
+    segment_entries = STATE.transcript_entries[STATE.current_segment_start_idx:]
+    if not segment_entries:
+        segment_entries = STATE.transcript_entries[-4:]
+    segment_sig = _signature(segment_entries)
     context = build_structured_context(
-        STATE.transcript_entries,
-        STATE.rolling_summary,
+        segment_entries,
+        STATE.current_segment_rolling_summary,
         last_primary_focus=STATE.last_primary_focus,
         last_conversation_type=STATE.last_conversation_type,
     )
     STATE.last_context = context
-    STATE.last_transcript_signature = signature
+    STATE.last_transcript_signature = segment_sig
 
     topic_shift = bool(context.topic_shift)
     prev_focus = STATE.last_primary_focus
@@ -312,7 +329,8 @@ async def chat(payload: ChatRequest):
     STATE.chat_history.append(user_msg)
 
     # Capture loop-local references for the generator closure.
-    _transcript = list(STATE.transcript_entries)
+    # Use only current-segment entries so chat answers don't bleed prior topic context.
+    _transcript = list(segment_entries)
     _context = context
     _history = list(STATE.chat_history)
     _from_suggestion = bool(payload.from_suggestion)

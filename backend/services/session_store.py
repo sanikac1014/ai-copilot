@@ -35,6 +35,11 @@ class SessionState:
     last_transcript_signature: str = ""
     session_segments: List[dict] = field(default_factory=list)
     last_topic_shift_time: float = 0.0  # perf_counter timestamp of last confirmed shift
+    # Index into transcript_entries where the current segment begins.
+    # Used to pass only current-segment entries to context/suggestion engines.
+    current_segment_start_idx: int = 0
+    # Rolling summary scoped to the current segment only (no prior-topic content).
+    current_segment_rolling_summary: str = ""
 
 
 STATE = SessionState()
