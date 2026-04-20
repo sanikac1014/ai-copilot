@@ -20,11 +20,7 @@ function ShimmerCard() {
 
 function confidenceAura(score) {
   if (score == null || Number.isNaN(score)) {
-    return {
-      ring: "ring-1 ring-slate-600/50",
-      shadow: "",
-      label: "—",
-    };
+    return { ring: "ring-1 ring-slate-600/50", shadow: "", label: "—" };
   }
   if (score >= 0.68) {
     return {
@@ -40,15 +36,13 @@ function confidenceAura(score) {
       label: "Moderate fit",
     };
   }
-  return {
-    ring: "ring-1 ring-slate-600/60",
-    shadow: "",
-    label: "Exploratory",
-  };
+  return { ring: "ring-1 ring-slate-600/60", shadow: "", label: "Exploratory" };
 }
 
 export default function SuggestionsPanel({
   suggestions,
+  suggestionHistory,
+  currentSegmentId,
   onSuggestionClick,
   onRefresh,
   loading,
@@ -146,14 +140,98 @@ export default function SuggestionsPanel({
     return `${raw.slice(0, 20)}…`;
   };
 
-  const fadeRank = (idx) => {
-    if (idx === 0) return "opacity-100";
-    if (idx === 1) return "opacity-[0.82]";
-    return "opacity-[0.68]";
+  // Strict segment filtering — ONLY render batches for the active segment.
+  const segmentBatches = useMemo(() => {
+    if (!Array.isArray(suggestionHistory) || suggestionHistory.length === 0) return [];
+    const filtered = suggestionHistory.filter((b) => b.segment_id === currentSegmentId);
+    console.log(
+      `[SuggestionsPanel] segment=${currentSegmentId} matching_batches=${filtered.length}/${suggestionHistory.length}`
+    );
+    return filtered;
+  }, [suggestionHistory, currentSegmentId]);
+
+  const previousBatches = segmentBatches.slice(0, -1);
+  // Use history as source of truth; fall back to suggestions prop ONLY for the very first
+  // render before any history arrives (history will be empty, segment will be 0).
+  const latestBatchSuggestions =
+    segmentBatches.length > 0
+      ? segmentBatches[segmentBatches.length - 1].suggestions || []
+      : suggestionHistory.length === 0
+      ? suggestions
+      : [];
+
+  const renderSuggestionCard = ({ item, idx, isLatest, batchIdx }) => {
+    const aura = confidenceAura(item.score);
+    const delayMs = idx * 150;
+    const isNew = isLatest;
+    return (
+      <button
+        key={`${batchIdx}-${idx}-${item.preview?.slice(0, 24)}`}
+        type="button"
+        className={`group w-full rounded-lg border bg-slate-900/80 p-3 text-left ring-inset transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.99] ${
+          isLatest ? "opacity-100" : "opacity-50"
+        } ${aura.ring} ${aura.shadow} ${
+          idx === 0 && isLatest
+            ? "border-blue-500/50 hover:border-orange-400/60 hover:shadow-blue-900/30"
+            : "border-slate-700/90 hover:border-blue-500/40"
+        } ${isLatest && glowBatch && idx === 0 ? "animate-card-glow" : ""} ${
+          isLatest && staggerOn ? "translate-x-0 opacity-100" : isLatest ? "translate-x-5 opacity-0" : ""
+        }`}
+        style={
+          isLatest
+            ? {
+                transitionDelay: `${delayMs}ms`,
+                transitionProperty: "transform, opacity, box-shadow, border-color",
+                transitionDuration: "380ms",
+              }
+            : {}
+        }
+        onClick={() => onSuggestionClick(item)}
+        title={`Why this suggestion: ${item.reason || "High relevance to current focus"}`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide ${getBadgeClass(item)}`}
+            >
+              {getBadgeLabel(item)}
+            </span>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{aura.label}</span>
+          </div>
+          {isNew && latestBatchId > 0 && idx < 3 ? (
+            <span
+              className={`rounded-md border border-orange-500/40 bg-orange-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-200 transition-all duration-200 ${
+                newBatchPulse ? "animate-pulse shadow-[0_0_12px_rgba(249,115,22,0.45)]" : ""
+              }`}
+            >
+              New
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-2 text-sm font-medium leading-snug text-white">{item.preview}</div>
+        <div className="mt-1.5 text-xs leading-relaxed text-slate-400">{item.reason}</div>
+        {isLatest && (
+          <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
+            <span
+              className={`h-1.5 flex-1 max-w-[4rem] rounded-full ${
+                (item.score ?? 0) >= 0.68
+                  ? "bg-emerald-500/70"
+                  : (item.score ?? 0) >= 0.52
+                  ? "bg-amber-400/70"
+                  : "bg-slate-600"
+              }`}
+            />
+            <span className="tabular-nums">
+              Rel {item.relevance ?? "—"} · Nov {item.novelty ?? "—"} · Act {item.actionability ?? "—"}
+            </span>
+          </div>
+        )}
+      </button>
+    );
   };
 
   return (
-    <div className="relative h-full overflow-hidden rounded-xl border border-blue-900/35 bg-slate-900/90 p-4 shadow-lg shadow-blue-950/20 backdrop-blur-sm transition-colors duration-200">
+    <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-blue-900/35 bg-slate-900/90 p-4 shadow-lg shadow-blue-950/20 backdrop-blur-sm transition-colors duration-200">
       {topicShiftLabel ? (
         <div
           key={topicShiftLabel}
@@ -201,7 +279,8 @@ export default function SuggestionsPanel({
         </div>
       )}
 
-      <div className={`space-y-3 transition-opacity duration-300 ${loading && suggestions.length ? "opacity-45" : "opacity-100"}`}>
+      {/* Scrollable suggestion area */}
+      <div className="flex-1 overflow-y-auto space-y-4 pr-0.5">
         {loading && !suggestions.length ? (
           <div className="space-y-3">
             <ShimmerCard />
@@ -210,65 +289,41 @@ export default function SuggestionsPanel({
           </div>
         ) : null}
 
-        {suggestions.map((item, idx) => {
-          const aura = confidenceAura(item.score);
-          const delayMs = idx * 150;
-          const slide = staggerOn;
-          return (
-            <button
-              key={`${latestBatchId}-${idx}-${item.preview?.slice(0, 24)}`}
-              type="button"
-              className={`group w-full rounded-lg border bg-slate-900/80 p-3 text-left ring-inset transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.99] ${fadeRank(
-                idx
-              )} ${aura.ring} ${aura.shadow} ${
-                idx === 0
-                  ? "border-blue-500/50 hover:border-orange-400/60 hover:shadow-blue-900/30"
-                  : "border-slate-700/90 hover:border-blue-500/40"
-              } ${glowBatch && idx === 0 ? "animate-card-glow" : ""} ${
-                slide ? "translate-x-0 opacity-100" : "translate-x-5 opacity-0"
-              }`}
-              style={{
-                transitionDelay: `${delayMs}ms`,
-                transitionProperty: "transform, opacity, box-shadow, border-color",
-                transitionDuration: "380ms",
-              }}
-              onClick={() => onSuggestionClick(item)}
-              title={`Why this suggestion: ${item.reason || "High relevance to current focus"}`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide ${getBadgeClass(item)}`}
-                  >
-                    {getBadgeLabel(item)}
-                  </span>
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{aura.label}</span>
-                </div>
-                {latestBatchId > 0 && idx < 3 ? (
-                  <span
-                    className={`rounded-md border border-orange-500/40 bg-orange-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-200 transition-all duration-200 ${
-                      newBatchPulse ? "animate-pulse shadow-[0_0_12px_rgba(249,115,22,0.45)]" : ""
-                    }`}
-                  >
-                    New
-                  </span>
-                ) : null}
-              </div>
-              <div className="mt-2 text-sm font-medium leading-snug text-white">{item.preview}</div>
-              <div className="mt-1.5 text-xs leading-relaxed text-slate-400">{item.reason}</div>
-              <div className="mt-2 flex items-center gap-2 text-[10px] text-slate-500">
-                <span
-                  className={`h-1.5 flex-1 max-w-[4rem] rounded-full ${
-                    (item.score ?? 0) >= 0.68 ? "bg-emerald-500/70" : (item.score ?? 0) >= 0.52 ? "bg-amber-400/70" : "bg-slate-600"
-                  }`}
-                />
-                <span className="tabular-nums">
-                  Rel {item.relevance ?? "—"} · Nov {item.novelty ?? "—"} · Act {item.actionability ?? "—"}
+        {/* Previous suggestion batches */}
+        {previousBatches.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="h-px flex-1 bg-slate-700/50" />
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
+                Previous Suggestions
+              </span>
+              <div className="h-px flex-1 bg-slate-700/50" />
+            </div>
+            {previousBatches.map((batch, batchIdx) =>
+              (batch.suggestions || []).map((item, idx) =>
+                renderSuggestionCard({ item, idx, isLatest: false, batchIdx })
+              )
+            )}
+          </div>
+        )}
+
+        {/* Latest suggestion batch */}
+        {latestBatchSuggestions.length > 0 && (
+          <div className={`space-y-3 transition-opacity duration-300 ${loading && suggestions.length ? "opacity-45" : "opacity-100"}`}>
+            {previousBatches.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="h-px flex-1 bg-slate-700/50" />
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-orange-400/80">
+                  Latest Suggestions
                 </span>
+                <div className="h-px flex-1 bg-slate-700/50" />
               </div>
-            </button>
-          );
-        })}
+            )}
+            {latestBatchSuggestions.map((item, idx) =>
+              renderSuggestionCard({ item, idx, isLatest: true, batchIdx: "latest" })
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

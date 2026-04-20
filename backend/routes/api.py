@@ -188,6 +188,10 @@ async def suggestions(payload: SuggestionRequest):
         ]
 
     STATE.latest_batch_id += 1
+    print(
+        f"[SUGGESTIONS][BATCH_CREATED] batch_id={STATE.latest_batch_id}"
+        f" segment_id={STATE.current_segment_id} count={len(suggestion_batch)}"
+    )
     STATE.suggestion_history.append(
         {
             "batch_id": STATE.latest_batch_id,
@@ -195,13 +199,32 @@ async def suggestions(payload: SuggestionRequest):
             "suggestions": suggestion_batch,
         }
     )
+    print(f"[SUGGESTIONS][HISTORY_APPENDED] history_length={len(STATE.suggestion_history)}")
 
     early_signal = detect_strong_signal_for_early_suggestion(STATE.transcript_entries)
     elapsed = time.perf_counter() - started_at
     print(f"[SUGGESTIONS] {elapsed:.2f}s")
+
+    serialized_history = [
+        {
+            "batch_id": batch["batch_id"],
+            "segment_id": batch["segment_id"],
+            "suggestions": [s.model_dump() for s in batch["suggestions"]],
+        }
+        for batch in STATE.suggestion_history
+    ]
+    print(f"[SUGGESTIONS][API_RETURN] suggestion_history length={len(serialized_history)}")
+
     return {
         "context": context.model_dump(),
         "suggestions": [s.model_dump() for s in suggestion_batch],
+        "current_batch": {
+            "batch_id": STATE.latest_batch_id,
+            "segment_id": STATE.current_segment_id,
+            "suggestions": [s.model_dump() for s in suggestion_batch],
+        },
+        "suggestion_history": serialized_history,
+        "current_segment_id": STATE.current_segment_id,
         "meta": {
             "batch_id": STATE.latest_batch_id,
             "segment_id": STATE.current_segment_id,

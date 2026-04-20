@@ -16,6 +16,8 @@ export default function App() {
   /** Browser SpeechRecognition interim / live line (cleared when Whisper chunk arrives). */
   const [previewText, setPreviewText] = useState("");
   const [displayedSuggestions, setDisplayedSuggestions] = useState([]);
+  const [suggestionHistory, setSuggestionHistory] = useState([]);
+  const [currentSegmentId, setCurrentSegmentId] = useState(0);
   const [chat, setChat] = useState([]);
   const [context, setContext] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -66,11 +68,31 @@ export default function App() {
       const source = data.meta?.suggestion_source;
       console.log("Suggestions received:", incoming.length, "source:", source);
       console.log("Suggestions received (previews):", incoming.map((s) => s.preview).join(" | "));
+      console.log("[SUGGESTIONS][HISTORY] length:", (data.suggestion_history || []).length);
       if (source === "llm") {
         console.log("Replacing fallback with real suggestions");
       }
-      // Always overwrite UI with API response (no append, no stale fallback).
+      const newSegmentId = data.current_segment_id ?? 0;
+      console.log("CURRENT SEGMENT:", newSegmentId);
+      console.log("BATCH SEGMENTS:", (data.suggestion_history || []).map((b) => b.segment_id));
+
+      // On topic shift: clear UI only — history must be preserved for segment filtering.
+      if (data.meta?.topic_shift) {
+        setDisplayedSuggestions([]);
+      }
+
+      // Always overwrite current suggestions with latest batch from API.
       setDisplayedSuggestions(incoming);
+      // Update segment id before history so the filter sees the right segment on re-render.
+      setCurrentSegmentId(newSegmentId);
+      // Append-only: merge new batches by batch_id to avoid duplicates and never reset.
+      if (Array.isArray(data.suggestion_history)) {
+        setSuggestionHistory((prev) => {
+          const existingIds = new Set(prev.map((b) => b.batch_id));
+          const toAdd = data.suggestion_history.filter((b) => !existingIds.has(b.batch_id));
+          return toAdd.length ? [...prev, ...toAdd] : prev;
+        });
+      }
       setContext(data.context);
       if (data.meta?.topic_shift) {
         flashTopicShiftBanner(data.context?.primary_focus);
@@ -378,6 +400,8 @@ export default function App() {
         />
         <SuggestionsPanel
           suggestions={displayedSuggestions}
+          suggestionHistory={suggestionHistory}
+          currentSegmentId={currentSegmentId}
           onSuggestionClick={(s) => sendChat(s.preview, true)}
           onRefresh={() => postSuggestions(transcript)}
           loading={suggestionLoading}
