@@ -288,8 +288,9 @@ export default function SuggestionsPanel({
           animateContext ? "animate-context-nudge ring-1 ring-orange-400/30" : ""
         }`}
       >
-        <div className="font-medium text-slate-100">
-          🧠 AI is tracking: <span className="text-orange-200">{context?.primary_focus || "…"}</span>
+        <div className="flex min-w-0 items-baseline gap-1 font-medium text-slate-100">
+          <span className="shrink-0">🧠 AI is tracking:</span>
+          <span className="truncate text-orange-200" title={context?.primary_focus || ""}>{context?.primary_focus || "…"}</span>
         </div>
         {context && (
           <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
