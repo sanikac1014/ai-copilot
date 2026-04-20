@@ -99,14 +99,12 @@ Browser → Vite proxy /api → FastAPI (backend.main:app)
 **Key design decisions:**
 - `suggestion_history` is append-only and never cleared — the frontend accumulates batches across topic shifts and uses `segment_id` filtering to show only the current segment's batches. This lets users scroll back through earlier topic suggestions.
 - Transcript chunking: `MediaRecorder` stops every 30 seconds, uploads the blob, and immediately restarts. This gives Whisper clean complete utterances rather than mid-sentence fragments.
-- Simulated streaming: the full chat answer is received then replayed token-by-token in the frontend at 22ms/18-char intervals. This gives a "typing" feel without requiring a streaming API.
+- True SSE streaming: `/chat` returns `text/event-stream`. The frontend consumes deltas via `ReadableStream` + `TextDecoder`, so the first token appears in ~300ms. A `meta` event is sent before any text so context/topic-shift state updates instantly.
 - Stale closure prevention: the 30-second auto-refresh interval uses `useRef` for `postSuggestions` and `transcript` so it always calls with current values.
 
 ---
 
 ## Tradeoffs
-
-**No real token streaming:** Simulated streaming is visually identical but the full latency is paid upfront. Real streaming would improve time-to-first-token but requires a streaming endpoint and SSE/chunked-transfer on Vercel — added complexity for marginal perceived benefit given answer lengths of 150-250 words.
 
 **In-memory state:** `SessionState` is a process-level singleton. Fine for one session; would break under concurrent users. For this assignment scope, it is the right call — no DB setup, instant reset on reload.
 
