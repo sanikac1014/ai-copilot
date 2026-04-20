@@ -10,41 +10,71 @@ def build_chat_reply(
     transcript_entries: List[TranscriptEntry],
     context: ContextPayload,
     history: List[ChatMessage],
+    from_suggestion: bool = False,
 ) -> str:
     from backend.services.session_store import CONFIG
-    tail = transcript_entries[-2:] if transcript_entries else []
+
+    # Use more transcript for suggestion expansions; last 2 chunks for free-form chat.
+    entry_limit = 8 if from_suggestion else 4
+    tail = transcript_entries[-entry_limit:] if transcript_entries else []
     full_transcript = "\n".join(f"[{t.timestamp}] {t.text}" for t in tail)[-CONFIG.chat_context_chars:]
+
     recent_history = history[-8:]
-    history_text = "\n".join(f"{m.role}: {m.content}" for m in recent_history)
+    history_text = "\n".join(
+        f"{m.role.upper()}: {m.content}" for m in recent_history if m.content
+    )
     extra = CONFIG.chat_prompt_extra.strip()
 
-    prompt = f"""
-Answer like a real-time assistant.
+    if from_suggestion:
+        prompt = f"""You are a real-time meeting copilot. The user clicked a suggestion card during an active conversation.
+Expand on it with a detailed, specific answer grounded entirely in what they are actually discussing.
 
-User message: "{user_message}"
+Suggestion clicked: "{user_message}"
 
-Conversation type: {context.conversation_type}
-Conversation stage: {context.stage}
-Primary focus: {context.primary_focus}
+Conversation context:
+- Primary topic: {context.primary_focus}
+- Conversation type: {context.conversation_type}
+- Stage: {context.stage}
+- Key uncertainties: {", ".join(context.uncertainties[:3]) or "none noted"}
 
-Recent chat history:
-{history_text}
+Recent conversation (use this as your source of truth):
+{full_transcript or "(no transcript yet)"}
 
-Full conversation:
-{full_transcript}
+Respond with this structure:
+**Direct answer** — 2-3 sentences addressing the suggestion head-on, using their exact situation.
+**Why it matters here** — 1-2 sentences tying the answer to something specific they said or are wrestling with.
+**Concrete steps** — 2-4 tight bullets the speaker could act on immediately.
+**Key tradeoff** — 1-2 sentences on the main risk or cost to consider.
 
-Constraints:
-- Keep response under 120-150 words
-- No tables
-- No long explanations
-- Be concise and actionable
+Rules:
+- Reference specific things from the transcript (names, numbers, decisions mentioned).
+- Never give a generic answer that could apply to any conversation.
+- 180-250 words total.
+- No padding, no filler phrases like "Great question" or "Certainly".
+{("Additional instructions: " + extra) if extra else ""}
+"""
+    else:
+        prompt = f"""You are a real-time meeting copilot. Answer the user's question based on their ongoing conversation.
 
-Structure:
-1. Direct answer (1-2 lines)
-2. Key recommendation (2-3 bullets max)
-3. One tradeoff (optional)
+User question: "{user_message}"
 
-Avoid over-explaining.
+Conversation context:
+- Topic: {context.primary_focus}
+- Type: {context.conversation_type}
+- Stage: {context.stage}
+
+Chat history:
+{history_text or "(none)"}
+
+Recent conversation:
+{full_transcript or "(no transcript yet)"}
+
+Give a focused, useful answer:
+1. Direct answer (2-3 lines)
+2. Recommendation or insight (2-3 bullets)
+3. One tradeoff or caveat if relevant
+
+Be specific to their conversation. 120-180 words max.
 {("Additional instructions: " + extra) if extra else ""}
 """
 
@@ -55,4 +85,3 @@ Avoid over-explaining.
         temperature=0.4,
     )
     return response.choices[0].message.content or ""
-

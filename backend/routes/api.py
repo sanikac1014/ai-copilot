@@ -308,7 +308,7 @@ async def chat(payload: ChatRequest):
     ts = datetime.now().strftime("%H:%M:%S")
     user_msg = ChatMessage(role="user", content=payload.message, timestamp=ts)
     STATE.chat_history.append(user_msg)
-    answer = build_chat_reply(payload.message, STATE.transcript_entries, context, STATE.chat_history)
+    answer = build_chat_reply(payload.message, STATE.transcript_entries, context, STATE.chat_history, from_suggestion=payload.from_suggestion)
     assistant_ts = datetime.now().strftime("%H:%M:%S")
     assistant_msg = ChatMessage(role="assistant", content=answer, timestamp=assistant_ts)
     STATE.chat_history.append(assistant_msg)
