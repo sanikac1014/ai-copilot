@@ -399,6 +399,20 @@ def _focus_is_same(a: str, b: str, threshold: float = 0.5) -> bool:
     return (overlap / union if union else 0.0) >= threshold
 
 
+def _entity_overlap(a: str, b: str) -> float:
+    """Jaccard on content words (length > 3) from both focus strings.
+
+    Filters short/stop words so 'vs', 'the', etc. don't inflate overlap.
+    Returns 1.0 when either side has no content words (conservative: no false shift).
+    """
+    ta = {w for w in _tokenize_topic(a) if len(w) > 3 and w not in _STOP}
+    tb = {w for w in _tokenize_topic(b) if len(w) > 3 and w not in _STOP}
+    if not ta or not tb:
+        return 1.0
+    union = len(ta | tb)
+    return len(ta & tb) / union if union else 0.0
+
+
 def detect_strong_signal_for_early_suggestion(entries: List[TranscriptEntry]) -> bool:
     if not entries:
         return False
@@ -445,7 +459,10 @@ def build_structured_context(
     recent_text = _join_recent_entries(recent_entries, max_chars=2500)
     chunk_only = " ".join(e.text for e in recent_entries).strip()
 
-    sim = focus_chunk_semantic_similarity(last_primary_focus, chunk_only)
+    # Use only the single latest entry for topic-shift similarity so that an older
+    # entry on the previous topic does not dilute the signal of a new distinct topic.
+    latest_chunk = entries[-1].text.strip()
+    sim = focus_chunk_semantic_similarity(last_primary_focus, latest_chunk)
     use_prior_summary = bool(not last_primary_focus.strip() or sim >= 0.6)
     effective_summary = (rolling_summary or "").strip() if use_prior_summary else ""
 
@@ -512,13 +529,27 @@ Prior rolling summary (ignore if unrelated to Recent): {effective_summary or "(n
         # Idempotency: if the new focus overlaps strongly with the previous one, suppress shift.
         focus_same = _focus_is_same(last_primary_focus, new_focus)
 
-        topic_shift = not focus_same and bool(type_mismatch or low_chunk_sim or focus_token_reset)
+        # Entity-level override: clearly different key nouns (e.g. "coffee vs matcha" →
+        # "best friend vs boyfriend") force a shift even when chunk-sim is borderline.
+        # Only fires when focus_same is already False — preserves stability guards.
+        entity_ov = _entity_overlap(last_primary_focus, new_focus)
+        entity_override = (
+            not focus_same
+            and bool(last_primary_focus.strip())
+            and bool(new_focus.strip())
+            and entity_ov < 0.30
+        )
+
+        topic_shift = not focus_same and bool(
+            type_mismatch or low_chunk_sim or focus_token_reset or entity_override
+        )
 
         print(
             f"[TOPIC_SHIFT] prev_focus={last_primary_focus!r} new_focus={new_focus!r} "
-            f"sim={sim:.3f} heuristic_type={heuristic_type!r} llm_type={new_type!r} "
-            f"type_mismatch={type_mismatch} low_chunk_sim={low_chunk_sim} "
-            f"focus_token_reset={focus_token_reset} focus_same={focus_same} → shift={topic_shift}"
+            f"sim={sim:.3f} entity_ov={entity_ov:.3f} heuristic_type={heuristic_type!r} "
+            f"llm_type={new_type!r} type_mismatch={type_mismatch} low_chunk_sim={low_chunk_sim} "
+            f"focus_token_reset={focus_token_reset} entity_override={entity_override} "
+            f"focus_same={focus_same} → shift={topic_shift}"
         )
 
         payload["focus_chunk_similarity"] = round(float(sim), 4)

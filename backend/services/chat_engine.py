@@ -16,6 +16,9 @@ def build_chat_reply(
 
     # Use more transcript for suggestion expansions; last 2 chunks for free-form chat.
     entry_limit = 8 if from_suggestion else 4
+    # After a topic shift only use the most recent entries so the answer stays on the new topic.
+    if context.topic_shift:
+        entry_limit = min(entry_limit, 2)
     tail = transcript_entries[-entry_limit:] if transcript_entries else []
     full_transcript = "\n".join(f"[{t.timestamp}] {t.text}" for t in tail)[-CONFIG.chat_context_chars:]
 
@@ -98,6 +101,8 @@ def stream_chat_reply(
     from backend.services.session_store import CONFIG
 
     entry_limit = 8 if from_suggestion else 4
+    if context.topic_shift:
+        entry_limit = min(entry_limit, 2)
     tail = transcript_entries[-entry_limit:] if transcript_entries else []
     full_transcript = "\n".join(f"[{t.timestamp}] {t.text}" for t in tail)[-CONFIG.chat_context_chars:]
 
