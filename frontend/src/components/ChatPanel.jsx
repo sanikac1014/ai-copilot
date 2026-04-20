@@ -43,8 +43,9 @@ export default function ChatPanel({ chat, onSend, loading }) {
                 : "border-slate-700/80 bg-slate-800/90 text-slate-100 shadow-inner"
             }`}
           >
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-              {msg.role === "user" ? "You" : "Assistant"}
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <span>{msg.role === "user" ? "You" : "Assistant"}</span>
+              {msg.timestamp && <span className="font-normal normal-case tracking-normal opacity-70">{msg.timestamp}</span>}
             </div>
             <div className="whitespace-pre-wrap leading-relaxed">
               {msg.content}

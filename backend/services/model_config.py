@@ -1,14 +1,16 @@
-"""Groq model selection. Default to lighter models to avoid TPD exhaustion on gpt-oss-120b."""
+"""Groq model selection. Defaults to gpt-oss-120b with llama-3.3-70b as rate-limit fallback."""
 
 import os
 
 
 def primary_model() -> str:
-    return os.getenv("GROQ_MODEL_PRIMARY", "llama-3.3-70b-versatile")
+    from backend.services.session_store import CONFIG
+    return CONFIG.model_primary or os.getenv("GROQ_MODEL_PRIMARY", "openai/gpt-oss-120b")
 
 
 def fallback_model() -> str:
-    return os.getenv("GROQ_MODEL_FALLBACK", "llama-3.1-8b-instant")
+    from backend.services.session_store import CONFIG
+    return CONFIG.model_fallback or os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile")
 
 
 def _is_rate_limit(exc: BaseException) -> bool:

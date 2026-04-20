@@ -615,11 +615,12 @@ def _json_instruction() -> str:
 
 
 def generate_suggestions(context: ContextPayload, previous_batches: List[List[Suggestion]]) -> List[Suggestion]:
+    from backend.services.session_store import CONFIG
     previous_suggestions = _flatten_previous(previous_batches)
     top_topics = rank_topics(context)
     focus_text = ", ".join(f"{t['name']} ({t['score']})" for t in top_topics) or context.primary_focus
 
-    rt = (context.recent_transcript or "")[-1200:]
+    rt = (context.recent_transcript or "")[-CONFIG.suggestion_context_chars:]
     echo_hints = _top_weighted_tokens(rt)[:14]
     minimal_context = {
         "recent_transcript": rt,
@@ -645,11 +646,13 @@ Each preview must sound like something you'd say out loud to the speaker after l
 Use prefer_echo_these_terms where natural; every preview must clearly reference their actual words or situation.
 """
 
+    extra = CONFIG.suggestion_prompt_extra.strip()
     prompt = f"""Meeting copilot. Context: {json.dumps(minimal_context)}
 Prior previews (no repeat): {json.dumps(prev_short)}
 Topics: {focus_text}
 {diversity}
 {strategy}
+{("Additional instructions: " + extra) if extra else ""}
 {_json_instruction()}
 """
     client = get_groq_client()

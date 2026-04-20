@@ -11,8 +11,9 @@ load_dotenv(override=False)
 
 
 def get_groq_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
+    from backend.services.session_store import CONFIG  # late import avoids circular deps
+    api_key = CONFIG.groq_api_key or os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("GROQ_API_KEY is missing in environment.")
+        raise ValueError("Groq API key is not configured. Open Settings and paste your key.")
     return Groq(api_key=api_key)
 

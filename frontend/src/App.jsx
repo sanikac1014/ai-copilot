@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ChatPanel from "./components/ChatPanel";
+import SettingsPanel from "./components/SettingsPanel";
 import SuggestionsPanel from "./components/SuggestionsPanel";
 import TranscriptPanel from "./components/TranscriptPanel";
 
@@ -26,6 +27,8 @@ export default function App() {
   const [latestBatchId, setLatestBatchId] = useState(0);
   const [newBatchPulse, setNewBatchPulse] = useState(false);
   const [topicShiftBanner, setTopicShiftBanner] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
   const topicShiftTimerRef = useRef(null);
   const mediaRecorder = useRef(null);
   const chunkBufferRef = useRef([]);
@@ -34,6 +37,31 @@ export default function App() {
   const suggestionDebounceRef = useRef(null);
   const transcribeRequestCounter = useRef(0);
   const speechRecognitionRef = useRef(null);
+
+  // On mount: restore saved config and push to backend.
+  useEffect(() => {
+    const stored = localStorage.getItem("twinmind_config");
+    if (!stored) {
+      setSettingsOpen(true); // first visit — open settings immediately
+      return;
+    }
+    try {
+      const cfg = JSON.parse(stored);
+      if (cfg.groq_api_key) {
+        fetch(`${API_URL}/config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cfg),
+        })
+          .then(() => setApiKeyConfigured(true))
+          .catch(() => {});
+      } else {
+        setSettingsOpen(true);
+      }
+    } catch {
+      setSettingsOpen(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const flashTopicShiftBanner = (label) => {
     if (topicShiftTimerRef.current) {
@@ -115,7 +143,7 @@ export default function App() {
   };
 
   const sendChat = async (message, fromSuggestion = false) => {
-    const userMsg = { role: "user", content: message };
+    const userMsg = { role: "user", content: message, timestamp: toTimestamp() };
     setChat((prev) => [...prev, userMsg]);
     setChatLoading(true);
     try {
@@ -134,7 +162,8 @@ export default function App() {
         flashTopicShiftBanner(data.context?.primary_focus);
       }
       const full = (data.message?.content ?? "").toString();
-      setChat((prev) => [...prev, { role: "assistant", content: "", streaming: true }]);
+      const assistantTs = data.message?.timestamp || toTimestamp();
+      setChat((prev) => [...prev, { role: "assistant", content: "", timestamp: assistantTs, streaming: true }]);
       const chunkSize = 18;
       const tickMs = 22;
       if (!full.length) {
@@ -375,6 +404,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-blue-950/40 p-4 text-slate-200">
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        apiUrl={API_URL}
+        onSaved={(cfg) => {
+          setApiKeyConfigured(Boolean(cfg.groq_api_key));
+          setSettingsOpen(false);
+        }}
+      />
+
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-blue-900/30 pb-4">
         <div>
           <h1 className="bg-gradient-to-r from-blue-200 via-white to-orange-200 bg-clip-text text-2xl font-bold tracking-tight text-transparent">
@@ -382,13 +421,32 @@ export default function App() {
           </h1>
           <p className="text-xs font-medium uppercase tracking-widest text-blue-300/70">Live suggestions co-pilot</p>
         </div>
-        <button
-          type="button"
-          className="rounded-lg border border-orange-500/50 bg-blue-600/90 px-4 py-2 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:bg-orange-500 hover:shadow-[0_0_20px_rgba(249,115,22,0.35)] active:scale-[0.98]"
-          onClick={exportAll}
-        >
-          Export JSON
-        </button>
+        <div className="flex items-center gap-2">
+          {!apiKeyConfigured && (
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              className="rounded-lg border border-orange-500/60 bg-orange-500/15 px-3 py-1.5 text-xs font-semibold text-orange-200 shadow-sm animate-pulse hover:bg-orange-500/25 transition-colors"
+            >
+              ⚠ Set API Key
+            </button>
+          )}
+          <button
+            type="button"
+            className="rounded-lg border border-slate-600/60 bg-slate-800/80 px-3 py-2 text-sm font-medium text-slate-300 shadow-sm transition-all duration-200 hover:border-blue-500/50 hover:text-white active:scale-[0.97]"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+          >
+            ⚙ Settings
+          </button>
+          <button
+            type="button"
+            className="rounded-lg border border-orange-500/50 bg-blue-600/90 px-4 py-2 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:bg-orange-500 hover:shadow-[0_0_20px_rgba(249,115,22,0.35)] active:scale-[0.98]"
+            onClick={exportAll}
+          >
+            Export JSON
+          </button>
+        </div>
       </div>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <TranscriptPanel

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const THINKING_PHRASES = [
   "Analyzing your context…",
@@ -39,6 +39,16 @@ function confidenceAura(score) {
   return { ring: "ring-1 ring-slate-600/60", shadow: "", label: "Exploratory" };
 }
 
+function SectionDivider({ label, color = "text-slate-500" }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-px flex-1 bg-slate-700/50" />
+      <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>{label}</span>
+      <div className="h-px flex-1 bg-slate-700/50" />
+    </div>
+  );
+}
+
 export default function SuggestionsPanel({
   suggestions,
   suggestionHistory,
@@ -56,16 +66,21 @@ export default function SuggestionsPanel({
   const [staggerOn, setStaggerOn] = useState(false);
   const [glowBatch, setGlowBatch] = useState(false);
 
+  // Stable display state — the ONLY source of truth for rendering.
+  // Stored as {batch_id, segment_id, suggestions[]} sorted newest-first.
+  const [stableBatches, setStableBatches] = useState([]);
+  const renderedBatchIdRef = useRef(null);
+
   const focusKey = context?.primary_focus ?? "";
 
+  // ── Phrase cycling while loading ─────────────────────────────────────────
   useEffect(() => {
     if (!loading) return undefined;
-    const id = window.setInterval(() => {
-      setPhraseIdx((i) => (i + 1) % THINKING_PHRASES.length);
-    }, 2400);
+    const id = window.setInterval(() => setPhraseIdx((i) => (i + 1) % THINKING_PHRASES.length), 2400);
     return () => window.clearInterval(id);
   }, [loading]);
 
+  // ── Context label pulse ───────────────────────────────────────────────────
   useEffect(() => {
     if (!focusKey) return;
     setAnimateContext(true);
@@ -73,16 +88,48 @@ export default function SuggestionsPanel({
     return () => window.clearTimeout(t);
   }, [focusKey]);
 
+  // ── Stable batches: update only when latestBatchId changes ───────────────
   useEffect(() => {
-    if (loading || !suggestions.length) {
+    if (!Array.isArray(suggestionHistory) || suggestionHistory.length === 0) {
+      // Fallback: if no history yet, show the suggestions prop as a single batch.
+      if (suggestions && suggestions.length > 0) {
+        setStableBatches([{ batch_id: latestBatchId, segment_id: currentSegmentId, suggestions }]);
+        renderedBatchIdRef.current = latestBatchId;
+      }
+      return;
+    }
+
+    const currentBatches = suggestionHistory.filter((b) => b.segment_id === currentSegmentId);
+    console.log(
+      `[SuggestionsPanel] segment=${currentSegmentId} matching=${currentBatches.length}/${suggestionHistory.length}`
+    );
+
+    if (currentBatches.length === 0) return;
+
+    const latest = currentBatches[currentBatches.length - 1];
+
+    // Skip re-render if the newest batch hasn't changed.
+    if (renderedBatchIdRef.current === latest.batch_id) return;
+
+    renderedBatchIdRef.current = latest.batch_id;
+
+    // Sort newest-first so index 0 is always the latest batch.
+    const sorted = [...currentBatches].sort((a, b) => b.batch_id - a.batch_id);
+    setStableBatches(sorted);
+  }, [suggestionHistory, currentSegmentId, latestBatchId, suggestions]);
+
+  // ── Stagger slide-in — keyed only to latestBatchId, not suggestions prop ─
+  useEffect(() => {
+    if (loading || stableBatches.length === 0) {
       setStaggerOn(false);
       return undefined;
     }
     setStaggerOn(false);
     const raf = requestAnimationFrame(() => setStaggerOn(true));
     return () => cancelAnimationFrame(raf);
-  }, [loading, latestBatchId, suggestions]);
+  }, [loading, latestBatchId]);
 
+  // ── Glow pulse on new batch ───────────────────────────────────────────────
   useEffect(() => {
     if (!newBatchPulse) return;
     setGlowBatch(true);
@@ -136,47 +183,30 @@ export default function SuggestionsPanel({
     const ic = (item?.intent_category || "").toLowerCase();
     if (ic && labelByIntent[ic]) return labelByIntent[ic];
     const raw = (item?.type || "Suggestion").trim();
-    if (raw.length <= 22) return raw;
-    return `${raw.slice(0, 20)}…`;
+    return raw.length <= 22 ? raw : `${raw.slice(0, 20)}…`;
   };
 
-  // Strict segment filtering — ONLY render batches for the active segment.
-  const segmentBatches = useMemo(() => {
-    if (!Array.isArray(suggestionHistory) || suggestionHistory.length === 0) return [];
-    const filtered = suggestionHistory.filter((b) => b.segment_id === currentSegmentId);
-    console.log(
-      `[SuggestionsPanel] segment=${currentSegmentId} matching_batches=${filtered.length}/${suggestionHistory.length}`
-    );
-    return filtered;
-  }, [suggestionHistory, currentSegmentId]);
-
-  const previousBatches = segmentBatches.slice(0, -1);
-  // Use history as source of truth; fall back to suggestions prop ONLY for the very first
-  // render before any history arrives (history will be empty, segment will be 0).
-  const latestBatchSuggestions =
-    segmentBatches.length > 0
-      ? segmentBatches[segmentBatches.length - 1].suggestions || []
-      : suggestionHistory.length === 0
-      ? suggestions
-      : [];
-
-  const renderSuggestionCard = ({ item, idx, isLatest, batchIdx }) => {
+  const renderSuggestionCard = (item, idx, isLatest, batchId) => {
     const aura = confidenceAura(item.score);
     const delayMs = idx * 150;
-    const isNew = isLatest;
     return (
       <button
-        key={`${batchIdx}-${idx}-${item.preview?.slice(0, 24)}`}
+        key={`${batchId}-${idx}-${item.preview?.slice(0, 24)}`}
         type="button"
-        className={`group w-full rounded-lg border bg-slate-900/80 p-3 text-left ring-inset transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.99] ${
-          isLatest ? "opacity-100" : "opacity-50"
-        } ${aura.ring} ${aura.shadow} ${
+        className={[
+          "group w-full rounded-lg border bg-slate-900/80 p-3 text-left ring-inset",
+          "transition-all duration-200 ease-out hover:-translate-y-1 hover:shadow-lg active:scale-[0.99]",
+          isLatest ? "opacity-100" : "opacity-50",
+          aura.ring,
+          aura.shadow,
           idx === 0 && isLatest
             ? "border-blue-500/50 hover:border-orange-400/60 hover:shadow-blue-900/30"
-            : "border-slate-700/90 hover:border-blue-500/40"
-        } ${isLatest && glowBatch && idx === 0 ? "animate-card-glow" : ""} ${
-          isLatest && staggerOn ? "translate-x-0 opacity-100" : isLatest ? "translate-x-5 opacity-0" : ""
-        }`}
+            : "border-slate-700/90 hover:border-blue-500/40",
+          isLatest && glowBatch && idx === 0 ? "animate-card-glow" : "",
+          isLatest && staggerOn ? "translate-x-0 opacity-100" : isLatest ? "translate-x-5 opacity-0" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         style={
           isLatest
             ? {
@@ -191,14 +221,12 @@ export default function SuggestionsPanel({
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span
-              className={`rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide ${getBadgeClass(item)}`}
-            >
+            <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide ${getBadgeClass(item)}`}>
               {getBadgeLabel(item)}
             </span>
             <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">{aura.label}</span>
           </div>
-          {isNew && latestBatchId > 0 && idx < 3 ? (
+          {isLatest && latestBatchId > 0 && idx < 3 ? (
             <span
               className={`rounded-md border border-orange-500/40 bg-orange-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-200 transition-all duration-200 ${
                 newBatchPulse ? "animate-pulse shadow-[0_0_12px_rgba(249,115,22,0.45)]" : ""
@@ -230,6 +258,8 @@ export default function SuggestionsPanel({
     );
   };
 
+  const hasStable = stableBatches.length > 0;
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden rounded-xl border border-blue-900/35 bg-slate-900/90 p-4 shadow-lg shadow-blue-950/20 backdrop-blur-sm transition-colors duration-200">
       {topicShiftLabel ? (
@@ -241,6 +271,7 @@ export default function SuggestionsPanel({
           🧠 New topic detected: <span className="font-semibold text-white">{topicShiftLabel}</span>
         </div>
       ) : null}
+
       <div className="mb-4 flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold tracking-tight text-white">Live Suggestions</h2>
         <button
@@ -279,9 +310,10 @@ export default function SuggestionsPanel({
         </div>
       )}
 
-      {/* Scrollable suggestion area */}
+      {/* Scrollable suggestion list — rendered from stableBatches only */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-0.5">
-        {loading && !suggestions.length ? (
+        {/* Shimmer: only while loading AND nothing stable to show yet */}
+        {loading && !hasStable ? (
           <div className="space-y-3">
             <ShimmerCard />
             <ShimmerCard />
@@ -289,41 +321,23 @@ export default function SuggestionsPanel({
           </div>
         ) : null}
 
-        {/* Previous suggestion batches */}
-        {previousBatches.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="h-px flex-1 bg-slate-700/50" />
-              <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">
-                Previous Suggestions
-              </span>
-              <div className="h-px flex-1 bg-slate-700/50" />
+        {stableBatches.map((batch, batchIndex) => {
+          const isLatest = batchIndex === 0;
+          const batchSuggestions = batch.suggestions || [];
+          if (batchSuggestions.length === 0) return null;
+          return (
+            <div key={batch.batch_id} className={`space-y-3 transition-opacity duration-300 ${loading && isLatest ? "opacity-45" : "opacity-100"}`}>
+              {isLatest ? (
+                stableBatches.length > 1 && (
+                  <SectionDivider label="Latest Suggestions" color="text-orange-400/80" />
+                )
+              ) : (
+                batchIndex === 1 && <SectionDivider label="Previous Suggestions" color="text-slate-500" />
+              )}
+              {batchSuggestions.map((item, idx) => renderSuggestionCard(item, idx, isLatest, batch.batch_id))}
             </div>
-            {previousBatches.map((batch, batchIdx) =>
-              (batch.suggestions || []).map((item, idx) =>
-                renderSuggestionCard({ item, idx, isLatest: false, batchIdx })
-              )
-            )}
-          </div>
-        )}
-
-        {/* Latest suggestion batch */}
-        {latestBatchSuggestions.length > 0 && (
-          <div className={`space-y-3 transition-opacity duration-300 ${loading && suggestions.length ? "opacity-45" : "opacity-100"}`}>
-            {previousBatches.length > 0 && (
-              <div className="flex items-center gap-2">
-                <div className="h-px flex-1 bg-slate-700/50" />
-                <span className="text-[10px] font-semibold uppercase tracking-widest text-orange-400/80">
-                  Latest Suggestions
-                </span>
-                <div className="h-px flex-1 bg-slate-700/50" />
-              </div>
-            )}
-            {latestBatchSuggestions.map((item, idx) =>
-              renderSuggestionCard({ item, idx, isLatest: true, batchIdx: "latest" })
-            )}
-          </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );

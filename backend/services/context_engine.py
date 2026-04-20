@@ -386,6 +386,19 @@ def should_reset_context_memory(previous_focus: str, new_focus: str, threshold: 
     return similarity < threshold
 
 
+def _focus_is_same(a: str, b: str, threshold: float = 0.5) -> bool:
+    """True when new primary_focus overlaps enough with previous that no shift is warranted."""
+    if not a or not b:
+        return False
+    ta = _tokenize_topic(a)
+    tb = _tokenize_topic(b)
+    if not ta or not tb:
+        return False
+    overlap = len(ta & tb)
+    union = len(ta | tb)
+    return (overlap / union if union else 0.0) >= threshold
+
+
 def detect_strong_signal_for_early_suggestion(entries: List[TranscriptEntry]) -> bool:
     if not entries:
         return False
@@ -482,11 +495,31 @@ Prior rolling summary (ignore if unrelated to Recent): {effective_summary or "(n
         new_type = payload.get("conversation_type", "technical")
         new_focus = (payload.get("primary_focus") or "").strip()
 
-        type_mismatch = bool(last_conversation_type) and last_conversation_type != new_type
-        low_chunk_sim = bool(last_primary_focus.strip()) and sim < 0.6
-        focus_token_reset = should_reset_context_memory(last_primary_focus, new_focus)
+        # Require heuristic to corroborate LLM type flips — prevents model phrasing artefacts.
+        heuristic_type = _infer_conversation_type_from_chunk(chunk_only)
+        type_mismatch = (
+            bool(last_conversation_type)
+            and last_conversation_type != new_type
+            and heuristic_type != last_conversation_type
+        )
 
-        topic_shift = bool(type_mismatch or low_chunk_sim or focus_token_reset)
+        low_chunk_sim = bool(last_primary_focus.strip()) and sim < 0.6
+
+        # focus_token_reset only counts when chunk similarity is also low — avoids shift on
+        # rephrased-but-same topics where the LLM just chose different wording for primary_focus.
+        focus_token_reset = low_chunk_sim and should_reset_context_memory(last_primary_focus, new_focus)
+
+        # Idempotency: if the new focus overlaps strongly with the previous one, suppress shift.
+        focus_same = _focus_is_same(last_primary_focus, new_focus)
+
+        topic_shift = not focus_same and bool(type_mismatch or low_chunk_sim or focus_token_reset)
+
+        print(
+            f"[TOPIC_SHIFT] prev_focus={last_primary_focus!r} new_focus={new_focus!r} "
+            f"sim={sim:.3f} heuristic_type={heuristic_type!r} llm_type={new_type!r} "
+            f"type_mismatch={type_mismatch} low_chunk_sim={low_chunk_sim} "
+            f"focus_token_reset={focus_token_reset} focus_same={focus_same} → shift={topic_shift}"
+        )
 
         payload["focus_chunk_similarity"] = round(float(sim), 4)
         payload["topic_shift"] = topic_shift

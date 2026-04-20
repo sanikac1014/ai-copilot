@@ -43,6 +43,7 @@ class ContextPayload(BaseModel):
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
+    timestamp: Optional[str] = None
 
 
 class SuggestionRequest(BaseModel):
@@ -54,3 +55,13 @@ class ChatRequest(BaseModel):
     transcript_entries: List[TranscriptEntry]
     message: str
     from_suggestion: bool = False
+
+
+class ConfigUpdate(BaseModel):
+    groq_api_key: Optional[str] = None
+    model_primary: Optional[str] = None
+    model_fallback: Optional[str] = None
+    suggestion_context_chars: Optional[int] = None
+    chat_context_chars: Optional[int] = None
+    suggestion_prompt_extra: Optional[str] = None
+    chat_prompt_extra: Optional[str] = None

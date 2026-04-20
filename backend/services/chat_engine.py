@@ -11,11 +11,12 @@ def build_chat_reply(
     context: ContextPayload,
     history: List[ChatMessage],
 ) -> str:
-    # Limit to latest 1–2 chunks so chat does not inherit unrelated earlier session text.
+    from backend.services.session_store import CONFIG
     tail = transcript_entries[-2:] if transcript_entries else []
-    full_transcript = "\n".join(f"[{t.timestamp}] {t.text}" for t in tail)[-4000:]
+    full_transcript = "\n".join(f"[{t.timestamp}] {t.text}" for t in tail)[-CONFIG.chat_context_chars:]
     recent_history = history[-8:]
     history_text = "\n".join(f"{m.role}: {m.content}" for m in recent_history)
+    extra = CONFIG.chat_prompt_extra.strip()
 
     prompt = f"""
 Answer like a real-time assistant.
@@ -44,6 +45,7 @@ Structure:
 3. One tradeoff (optional)
 
 Avoid over-explaining.
+{("Additional instructions: " + extra) if extra else ""}
 """
 
     client = get_groq_client()

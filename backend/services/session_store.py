@@ -6,6 +6,21 @@ from backend.models.schemas import ChatMessage, ContextPayload, Suggestion, Tran
 
 
 @dataclass
+class Config:
+    """Runtime-editable configuration. Persists for the server process lifetime."""
+    groq_api_key: str = ""
+    model_primary: str = ""       # empty → use model_config default
+    model_fallback: str = ""      # empty → use model_config default
+    suggestion_context_chars: int = 1200
+    chat_context_chars: int = 4000
+    suggestion_prompt_extra: str = ""
+    chat_prompt_extra: str = ""
+
+
+CONFIG = Config()
+
+
+@dataclass
 class SessionState:
     transcript_entries: List[TranscriptEntry] = field(default_factory=list)
     chat_history: List[ChatMessage] = field(default_factory=list)
@@ -19,6 +34,7 @@ class SessionState:
     last_context: Optional[ContextPayload] = None
     last_transcript_signature: str = ""
     session_segments: List[dict] = field(default_factory=list)
+    last_topic_shift_time: float = 0.0  # perf_counter timestamp of last confirmed shift
 
 
 STATE = SessionState()

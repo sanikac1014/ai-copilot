@@ -4,14 +4,14 @@ from datetime import datetime
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from backend.models.schemas import ChatMessage, ChatRequest, Suggestion, SuggestionRequest, TranscriptEntry
+from backend.models.schemas import ChatMessage, ChatRequest, ConfigUpdate, Suggestion, SuggestionRequest, TranscriptEntry
 from backend.services.chat_engine import build_chat_reply
 from backend.services.context_engine import (
     build_structured_context,
     detect_strong_signal_for_early_suggestion,
     segment_opening_summary,
 )
-from backend.services.session_store import STATE
+from backend.services.session_store import CONFIG, STATE
 from backend.services.suggestion_engine import generate_suggestions
 from backend.services.transcription import transcribe_audio
 
@@ -131,7 +131,29 @@ async def suggestions(payload: SuggestionRequest):
     prev_focus = STATE.last_primary_focus
     prev_type = STATE.last_conversation_type
 
+    # Cooldown guard: suppress consecutive shifts within 30 s to prevent rapid flipping.
+    # Exception: very strong signals (sim < 0.3 + type change) bypass the cooldown.
+    _SHIFT_COOLDOWN = 30.0
+    sim = context.focus_chunk_similarity
+    type_changed = bool(prev_type) and prev_type != context.conversation_type
+    strong_shift_override = sim < 0.3 and type_changed
+    if topic_shift and STATE.last_topic_shift_time:
+        elapsed_since_shift = time.perf_counter() - STATE.last_topic_shift_time
+        if elapsed_since_shift < _SHIFT_COOLDOWN:
+            if strong_shift_override:
+                print(
+                    f"[TOPIC_SHIFT][OVERRIDE] sim={sim:.3f} type {prev_type!r}→{context.conversation_type!r}"
+                    f" — bypassing cooldown ({elapsed_since_shift:.1f}s)"
+                )
+            else:
+                print(
+                    f"[TOPIC_SHIFT][SUPPRESSED] sim={sim:.3f} cooldown {elapsed_since_shift:.1f}s"
+                    f" < {_SHIFT_COOLDOWN}s"
+                )
+                topic_shift = False
+
     if topic_shift:
+        STATE.last_topic_shift_time = time.perf_counter()
         STATE.suggestion_history.clear()
 
     _sync_session_segments(context, topic_shift)
@@ -254,7 +276,27 @@ async def chat(payload: ChatRequest):
     prev_focus = STATE.last_primary_focus
     prev_type = STATE.last_conversation_type
 
+    _SHIFT_COOLDOWN = 30.0
+    sim = context.focus_chunk_similarity
+    type_changed = bool(prev_type) and prev_type != context.conversation_type
+    strong_shift_override = sim < 0.3 and type_changed
+    if topic_shift and STATE.last_topic_shift_time:
+        elapsed_since_shift = time.perf_counter() - STATE.last_topic_shift_time
+        if elapsed_since_shift < _SHIFT_COOLDOWN:
+            if strong_shift_override:
+                print(
+                    f"[TOPIC_SHIFT][OVERRIDE] sim={sim:.3f} type {prev_type!r}→{context.conversation_type!r}"
+                    f" — bypassing cooldown ({elapsed_since_shift:.1f}s)"
+                )
+            else:
+                print(
+                    f"[TOPIC_SHIFT][SUPPRESSED] sim={sim:.3f} cooldown {elapsed_since_shift:.1f}s"
+                    f" < {_SHIFT_COOLDOWN}s"
+                )
+                topic_shift = False
+
     if topic_shift:
+        STATE.last_topic_shift_time = time.perf_counter()
         STATE.suggestion_history.clear()
 
     _sync_session_segments(context, topic_shift)
@@ -263,10 +305,12 @@ async def chat(payload: ChatRequest):
     STATE.last_primary_focus = context.primary_focus
     STATE.last_conversation_type = context.conversation_type
 
-    user_msg = ChatMessage(role="user", content=payload.message)
+    ts = datetime.now().strftime("%H:%M:%S")
+    user_msg = ChatMessage(role="user", content=payload.message, timestamp=ts)
     STATE.chat_history.append(user_msg)
     answer = build_chat_reply(payload.message, STATE.transcript_entries, context, STATE.chat_history)
-    assistant_msg = ChatMessage(role="assistant", content=answer)
+    assistant_ts = datetime.now().strftime("%H:%M:%S")
+    assistant_msg = ChatMessage(role="assistant", content=answer, timestamp=assistant_ts)
     STATE.chat_history.append(assistant_msg)
 
     return {
@@ -329,3 +373,36 @@ async def export_state():
         "session_segments": segments_out,
         "latest_batch_id": STATE.latest_batch_id,
     }
+
+
+@router.get("/config")
+async def get_config():
+    return {
+        "groq_api_key_set": bool(CONFIG.groq_api_key),
+        "model_primary": CONFIG.model_primary,
+        "model_fallback": CONFIG.model_fallback,
+        "suggestion_context_chars": CONFIG.suggestion_context_chars,
+        "chat_context_chars": CONFIG.chat_context_chars,
+        "suggestion_prompt_extra": CONFIG.suggestion_prompt_extra,
+        "chat_prompt_extra": CONFIG.chat_prompt_extra,
+    }
+
+
+@router.post("/config")
+async def set_config(payload: ConfigUpdate):
+    if payload.groq_api_key is not None:
+        CONFIG.groq_api_key = payload.groq_api_key.strip()
+    if payload.model_primary is not None:
+        CONFIG.model_primary = payload.model_primary.strip()
+    if payload.model_fallback is not None:
+        CONFIG.model_fallback = payload.model_fallback.strip()
+    if payload.suggestion_context_chars is not None:
+        CONFIG.suggestion_context_chars = max(200, min(8000, payload.suggestion_context_chars))
+    if payload.chat_context_chars is not None:
+        CONFIG.chat_context_chars = max(500, min(16000, payload.chat_context_chars))
+    if payload.suggestion_prompt_extra is not None:
+        CONFIG.suggestion_prompt_extra = payload.suggestion_prompt_extra
+    if payload.chat_prompt_extra is not None:
+        CONFIG.chat_prompt_extra = payload.chat_prompt_extra
+    print(f"[CONFIG] updated: key_set={bool(CONFIG.groq_api_key)} model={CONFIG.model_primary or '(default)'}")
+    return {"ok": True, "groq_api_key_set": bool(CONFIG.groq_api_key)}
