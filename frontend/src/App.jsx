@@ -167,6 +167,10 @@ export default function App() {
     const userMsg = { role: "user", content: message, timestamp: toTimestamp() };
     setChat((prev) => [...prev, userMsg]);
     setChatLoading(true);
+
+    // Add empty streaming placeholder immediately so the cursor appears right away.
+    setChat((prev) => [...prev, { role: "assistant", content: "", timestamp: "", streaming: true }]);
+
     try {
       const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
@@ -177,57 +181,56 @@ export default function App() {
         const errText = await res.text().catch(() => res.statusText);
         throw new Error(errText || `Chat failed (${res.status})`);
       }
-      const data = await res.json();
-      if (data.context) setContext(data.context);
-      if (data.meta?.topic_shift) {
-        flashTopicShiftBanner(data.context?.primary_focus);
-      }
-      const full = (data.message?.content ?? "").toString();
-      const assistantTs = data.message?.timestamp || toTimestamp();
-      setChat((prev) => [...prev, { role: "assistant", content: "", timestamp: assistantTs, streaming: true }]);
-      const chunkSize = 18;
-      const tickMs = 22;
-      if (!full.length) {
-        setChat((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = { role: "assistant", content: "", streaming: false };
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // keep any incomplete line for next iteration
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          let evt;
+          try { evt = JSON.parse(raw); } catch { continue; }
+
+          if (evt.type === "meta") {
+            if (evt.context) setContext(evt.context);
+            if (evt.meta?.topic_shift) flashTopicShiftBanner(evt.context?.primary_focus);
+          } else if (evt.type === "delta") {
+            setChat((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = { ...last, content: last.content + evt.text, streaming: true };
+              }
+              return next;
+            });
+          } else if (evt.type === "done") {
+            setChat((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = { ...last, timestamp: evt.timestamp || toTimestamp(), streaming: false };
+              }
+              return next;
+            });
           }
-          return next;
-        });
-      } else {
-        for (let pos = 0; pos < full.length; pos += chunkSize) {
-          const slice = full.slice(0, Math.min(pos + chunkSize, full.length));
-          const done = slice.length >= full.length;
-          setChat((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last?.role === "assistant") {
-              next[next.length - 1] = { role: "assistant", content: slice, streaming: !done };
-            }
-            return next;
-          });
-          if (done) break;
-          await new Promise((r) => setTimeout(r, tickMs));
         }
-        setChat((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = { role: "assistant", content: full, streaming: false };
-          }
-          return next;
-        });
       }
     } catch (err) {
       console.error("[CHAT]", err);
+      const msg = "Could not reach the assistant. Check the API and try again.";
       setChat((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
-        const msg = "Could not reach the assistant. Check the API and try again.";
-        if (last?.role === "assistant" && last.streaming) {
-          next[next.length - 1] = { role: "assistant", content: msg, streaming: false };
+        if (last?.role === "assistant") {
+          next[next.length - 1] = { ...last, content: msg, streaming: false };
           return next;
         }
         return [...next, { role: "assistant", content: msg, streaming: false }];

@@ -36,3 +36,25 @@ def chat_with_fallback(client, messages: list, **kwargs):
             raise
     assert last_exc is not None
     raise last_exc
+
+
+def stream_with_fallback(client, messages: list, **kwargs):
+    """Same as chat_with_fallback but returns a streaming iterator and the model name used."""
+    models = [primary_model(), fallback_model()]
+    last_exc: BaseException | None = None
+    for idx, model in enumerate(models):
+        try:
+            stream = client.chat.completions.create(
+                model=model, messages=messages, stream=True, **kwargs
+            )
+            if idx > 0:
+                print(f"[GROQ] streaming: using fallback model {model}")
+            return stream, model
+        except BaseException as exc:
+            last_exc = exc
+            if _is_rate_limit(exc) and idx < len(models) - 1:
+                print(f"[GROQ] streaming: {model} rate limited, retrying with {models[idx + 1]}")
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc

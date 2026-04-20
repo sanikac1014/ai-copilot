@@ -1,11 +1,13 @@
 import asyncio
+import json
 import time
 from datetime import datetime
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from backend.models.schemas import ChatMessage, ChatRequest, ConfigUpdate, Suggestion, SuggestionRequest, TranscriptEntry
-from backend.services.chat_engine import build_chat_reply
+from backend.services.chat_engine import stream_chat_reply
 from backend.services.context_engine import (
     build_structured_context,
     detect_strong_signal_for_early_suggestion,
@@ -308,21 +310,46 @@ async def chat(payload: ChatRequest):
     ts = datetime.now().strftime("%H:%M:%S")
     user_msg = ChatMessage(role="user", content=payload.message, timestamp=ts)
     STATE.chat_history.append(user_msg)
-    answer = build_chat_reply(payload.message, STATE.transcript_entries, context, STATE.chat_history, from_suggestion=payload.from_suggestion)
-    assistant_ts = datetime.now().strftime("%H:%M:%S")
-    assistant_msg = ChatMessage(role="assistant", content=answer, timestamp=assistant_ts)
-    STATE.chat_history.append(assistant_msg)
 
-    return {
-        "message": assistant_msg.model_dump(),
-        "context": context.model_dump(),
-        "meta": {
-            "reset_triggered": topic_shift,
-            "topic_shift": topic_shift,
-            "focus_chunk_similarity": context.focus_chunk_similarity,
-            "segment_id": STATE.current_segment_id,
-        },
-    }
+    # Capture loop-local references for the generator closure.
+    _transcript = list(STATE.transcript_entries)
+    _context = context
+    _history = list(STATE.chat_history)
+    _from_suggestion = bool(payload.from_suggestion)
+    _topic_shift = topic_shift
+    _segment_id = STATE.current_segment_id
+
+    def generate():
+        # First event: metadata so the frontend can update context immediately.
+        yield (
+            "data: "
+            + json.dumps({
+                "type": "meta",
+                "context": _context.model_dump(),
+                "meta": {
+                    "topic_shift": _topic_shift,
+                    "segment_id": _segment_id,
+                    "focus_chunk_similarity": _context.focus_chunk_similarity,
+                },
+            })
+            + "\n\n"
+        )
+
+        collected: list[str] = []
+        assistant_ts = datetime.now().strftime("%H:%M:%S")
+        try:
+            for delta in stream_chat_reply(
+                payload.message, _transcript, _context, _history, from_suggestion=_from_suggestion
+            ):
+                collected.append(delta)
+                yield "data: " + json.dumps({"type": "delta", "text": delta}) + "\n\n"
+        finally:
+            content = "".join(collected)
+            assistant_msg = ChatMessage(role="assistant", content=content, timestamp=assistant_ts)
+            STATE.chat_history.append(assistant_msg)
+            yield "data: " + json.dumps({"type": "done", "timestamp": assistant_ts}) + "\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @router.get("/export")
