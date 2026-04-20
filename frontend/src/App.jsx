@@ -35,6 +35,10 @@ export default function App() {
   const stopTimerRef = useRef(null);
   const isRecordingRef = useRef(false);
   const suggestionDebounceRef = useRef(null);
+  const autoRefreshRef = useRef(null);
+  // Refs so the 30s interval always calls with latest values (avoids stale closure).
+  const transcriptRef = useRef([]);
+  const postSuggestionsRef = useRef(null);
   const transcribeRequestCounter = useRef(0);
   const speechRecognitionRef = useRef(null);
 
@@ -81,6 +85,9 @@ export default function App() {
       }
     };
   }, []);
+
+  // Keep refs current so the 30s interval callback never closes over stale values.
+  transcriptRef.current = transcript;
 
   const postSuggestions = async (entries) => {
     const startedAt = performance.now();
@@ -137,10 +144,14 @@ export default function App() {
         window.setTimeout(() => postSuggestions(entries), 9000);
       }
       console.log(`[SUGGESTIONS] ${((performance.now() - startedAt) / 1000).toFixed(2)}s`);
+    } catch (err) {
+      console.error("[SUGGESTIONS][ERROR]", err);
     } finally {
       setSuggestionLoading(false);
     }
   };
+  // Always keep the ref pointing at the latest version of the function.
+  postSuggestionsRef.current = postSuggestions;
 
   const sendChat = async (message, fromSuggestion = false) => {
     const userMsg = { role: "user", content: message, timestamp: toTimestamp() };
@@ -363,6 +374,7 @@ export default function App() {
     else startRecording();
   };
 
+  // Debounce-trigger: fire 2.5 s after each new transcript chunk lands.
   useEffect(() => {
     if (!transcript.length) return undefined;
     if (suggestionDebounceRef.current) {
@@ -378,6 +390,28 @@ export default function App() {
       }
     };
   }, [transcript]);
+
+  // 30-second auto-refresh while recording — keeps suggestions alive during pauses.
+  useEffect(() => {
+    if (!isRecording) {
+      if (autoRefreshRef.current) {
+        window.clearInterval(autoRefreshRef.current);
+        autoRefreshRef.current = null;
+      }
+      return;
+    }
+    autoRefreshRef.current = window.setInterval(() => {
+      if (transcriptRef.current.length > 0) {
+        postSuggestionsRef.current(transcriptRef.current);
+      }
+    }, 30000);
+    return () => {
+      if (autoRefreshRef.current) {
+        window.clearInterval(autoRefreshRef.current);
+        autoRefreshRef.current = null;
+      }
+    };
+  }, [isRecording]);
 
   useEffect(() => {
     if (finalTranscript) {
