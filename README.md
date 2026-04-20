@@ -2,7 +2,7 @@
 
 A real-time AI meeting copilot. Listens to your mic, continuously surfaces 3 contextual suggestions based on what is being said, and lets you click any suggestion for a detailed answer in a chat panel.
 
-**Live demo:** [https://ai-copilot-delta.vercel.app](https://ai-copilot-delta.vercel.app)
+**Live demo:** [https://ai-copilot-chi.vercel.app/](https://ai-copilot-chi.vercel.app/)
 
 ---
 
