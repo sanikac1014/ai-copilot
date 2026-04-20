@@ -76,11 +76,17 @@ The distinction matters because a clicked suggestion should expand into a thorou
 
 ### Topic Shift Detection
 
-Context engine detects topic changes using word-cosine + trigram-Jaccard similarity (no embeddings). A shift is confirmed when:
-- Chunk-to-focus similarity drops below 0.6, AND
-- Either conversation type changes (corroborated by a local heuristic) or token Jaccard drops below 0.25.
+Context engine detects topic changes using word-cosine + trigram-Jaccard similarity (no embeddings). A shift is confirmed when any of these fire (and `focus_same` override does not suppress):
+- Chunk-to-focus similarity < 0.6 (`low_chunk_sim`)
+- Conversation type changes, corroborated by a local heuristic (`type_mismatch`) — prevents LLM phrasing artefacts from flipping the type alone
+- Token Jaccard < 0.25 AND low_chunk_sim (`focus_token_reset`) — AND-gated to avoid rephrasing shifts
+- **Entity override:** key-noun Jaccard between old and new `primary_focus` < 0.30 (`entity_override`) — catches clearly different topics like "coffee vs matcha" → "best friend vs boyfriend" even when chunk-sim is borderline
 
-A 30-second cooldown prevents rapid flipping. A strong-signal override (sim < 0.3 + type change) bypasses the cooldown. On shift: suggestion history is segmented so old suggestions stay visible but new batches are clearly separated.
+Similarity is computed on the **single latest entry only** (not the last 2 combined) so an older entry from the previous topic can't dilute the signal.
+
+A 30-second cooldown prevents rapid flipping. A strong-signal override (sim < 0.3 + type change) bypasses the cooldown.
+
+**Segment isolation:** on every confirmed shift, `current_segment_start_idx` is updated to the triggering entries. All subsequent suggestion and chat context calls use only entries from that index onwards, paired with a `current_segment_rolling_summary` that contains no prior-topic content. This prevents suggestions from drifting back to an older topic on refresh.
 
 ---
 
@@ -99,8 +105,10 @@ Browser → Vite proxy /api → FastAPI (backend.main:app)
 **Key design decisions:**
 - `suggestion_history` is append-only and never cleared — the frontend accumulates batches across topic shifts and uses `segment_id` filtering to show only the current segment's batches. This lets users scroll back through earlier topic suggestions.
 - Transcript chunking: `MediaRecorder` stops every 30 seconds, uploads the blob, and immediately restarts. This gives Whisper clean complete utterances rather than mid-sentence fragments.
-- True SSE streaming: `/chat` returns `text/event-stream`. The frontend consumes deltas via `ReadableStream` + `TextDecoder`, so the first token appears in ~300ms. A `meta` event is sent before any text so context/topic-shift state updates instantly.
+- True SSE streaming: `/chat` returns `text/event-stream`. The frontend consumes deltas via `ReadableStream` + `TextDecoder`, so the first token appears in ~300ms. A `meta` event is sent before any text so context/topic-shift state updates instantly. The assistant bubble is created on the first delta (not at send time), so the typing indicator and the message never overlap.
+- Segment isolation: `current_segment_start_idx` + `current_segment_rolling_summary` ensure suggestions and chat always use only current-segment transcript, preventing cross-topic drift on refresh.
 - Stale closure prevention: the 30-second auto-refresh interval uses `useRef` for `postSuggestions` and `transcript` so it always calls with current values.
+- Reset Chat: clears chat messages only — transcript, suggestions, and settings are unaffected.
 
 ---
 
