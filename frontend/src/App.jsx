@@ -517,7 +517,7 @@ export default function App() {
           newBatchPulse={newBatchPulse}
           topicShiftLabel={topicShiftBanner}
         />
-        <ChatPanel chat={chat} onSend={(msg) => sendChat(msg, false)} loading={chatLoading} />
+        <ChatPanel chat={chat} onSend={(msg) => sendChat(msg, false)} onReset={() => setChat([])} loading={chatLoading} />
       </div>
     </div>
   );

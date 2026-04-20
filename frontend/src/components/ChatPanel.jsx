@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export default function ChatPanel({ chat, onSend, loading }) {
+export default function ChatPanel({ chat, onSend, onReset, loading }) {
   const [message, setMessage] = useState("");
   const bottomRef = useRef(null);
 
@@ -22,9 +22,14 @@ export default function ChatPanel({ chat, onSend, loading }) {
     <div className="flex h-full min-h-[70vh] flex-col rounded-xl border border-blue-900/35 bg-slate-900/90 p-4 shadow-lg shadow-blue-950/20">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight text-white">Chat</h2>
-        <span className="rounded border border-orange-500/30 bg-orange-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-200">
-          Session
-        </span>
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={loading || chat.length === 0}
+          className="rounded-lg border border-slate-700/80 bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-400 transition-all duration-200 hover:border-red-500/40 hover:text-red-300 disabled:pointer-events-none disabled:opacity-30"
+        >
+          Reset Chat
+        </button>
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
         {chat.length === 0 && !loading ? (
