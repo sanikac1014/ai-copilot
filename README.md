@@ -80,7 +80,7 @@ Context engine detects topic changes using word-cosine + trigram-Jaccard similar
 - Chunk-to-focus similarity < 0.6 (`low_chunk_sim`)
 - Conversation type changes, corroborated by a local heuristic (`type_mismatch`) — prevents LLM phrasing artefacts from flipping the type alone
 - Token Jaccard < 0.25 AND low_chunk_sim (`focus_token_reset`) — AND-gated to avoid rephrasing shifts
-- **Entity override:** key-noun Jaccard between old and new `primary_focus` < 0.30 (`entity_override`) — catches clearly different topics like "coffee vs matcha" → "best friend vs boyfriend" even when chunk-sim is borderline
+- **Entity override:** key-noun Jaccard between old and new `primary_focus` < 0.30 (`entity_override`) — catches clearly different topics even when chunk-sim is borderline
 
 Similarity is computed on the **single latest entry only** (not the last 2 combined) so an older entry from the previous topic can't dilute the signal.
 
