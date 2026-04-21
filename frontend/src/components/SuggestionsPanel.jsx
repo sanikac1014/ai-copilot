@@ -56,6 +56,7 @@ export default function SuggestionsPanel({
   onSuggestionClick,
   onRefresh,
   loading,
+  isRefreshing,
   context,
   latestBatchId,
   newBatchPulse,
@@ -301,13 +302,21 @@ export default function SuggestionsPanel({
         )}
       </div>
 
-      {loading && (
+      {/* Full thinking indicator — only on initial load before any content exists */}
+      {loading && !hasStable && (
         <div className="mb-3 flex items-center gap-2 text-sm font-medium text-blue-200/90">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
           </span>
           <span className="transition-opacity duration-300">{THINKING_PHRASES[phraseIdx]}</span>
+        </div>
+      )}
+      {/* Background refresh indicator — never hides or dims existing suggestions */}
+      {isRefreshing && hasStable && (
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500">
+          <span className="h-1.5 w-1.5 rounded-full bg-orange-400/70 animate-pulse" />
+          Refreshing…
         </div>
       )}
 
@@ -327,7 +336,7 @@ export default function SuggestionsPanel({
           const batchSuggestions = batch.suggestions || [];
           if (batchSuggestions.length === 0) return null;
           return (
-            <div key={batch.batch_id} className={`space-y-3 transition-opacity duration-300 ${loading && isLatest ? "opacity-45" : "opacity-100"}`}>
+            <div key={batch.batch_id} className="space-y-3">
               {isLatest ? (
                 stableBatches.length > 1 && (
                   <SectionDivider label="Latest Suggestions" color="text-orange-400/80" />

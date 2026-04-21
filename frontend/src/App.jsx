@@ -23,6 +23,7 @@ export default function App() {
   const [context, setContext] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [latestBatchId, setLatestBatchId] = useState(0);
   const [newBatchPulse, setNewBatchPulse] = useState(false);
@@ -35,8 +36,9 @@ export default function App() {
   const stopTimerRef = useRef(null);
   const isRecordingRef = useRef(false);
   const suggestionDebounceRef = useRef(null);
-  const autoRefreshRef = useRef(null);
-  // Refs so the 30s interval always calls with latest values (avoids stale closure).
+  const refreshTimerRef = useRef(null);
+  const hasEverLoadedSuggestionsRef = useRef(false);
+  // Refs so interval callbacks always call with latest values (avoids stale closure).
   const transcriptRef = useRef([]);
   const postSuggestionsRef = useRef(null);
   const transcribeRequestCounter = useRef(0);
@@ -96,12 +98,25 @@ export default function App() {
     };
   }, []);
 
-  // Keep refs current so the 30s interval callback never closes over stale values.
+  // Keep refs current so interval callbacks never close over stale values.
   transcriptRef.current = transcript;
+
+  // Restart (or start) the 30s auto-refresh interval. Only runs while recording.
+  const startRefreshTimer = () => {
+    if (refreshTimerRef.current) window.clearInterval(refreshTimerRef.current);
+    if (!isRecordingRef.current) return;
+    refreshTimerRef.current = window.setInterval(() => {
+      if (transcriptRef.current.length > 0) {
+        postSuggestionsRef.current(transcriptRef.current);
+      }
+    }, 30000);
+  };
 
   const postSuggestions = async (entries) => {
     const startedAt = performance.now();
-    setSuggestionLoading(true);
+    // First-ever load: show shimmer. Subsequent calls: show small background indicator only.
+    if (!hasEverLoadedSuggestionsRef.current) setSuggestionLoading(true);
+    setIsRefreshing(true);
     try {
       const res = await fetch(`${API_URL}/suggestions`, {
         method: "POST",
@@ -109,27 +124,14 @@ export default function App() {
         body: JSON.stringify({ transcript_entries: entries, force_refresh: true }),
       });
       const data = await res.json();
+      hasEverLoadedSuggestionsRef.current = true;
       const incoming = (data.suggestions || []).slice(0, 3);
-      const source = data.meta?.suggestion_source;
-      console.log("Suggestions received:", incoming.length, "source:", source);
-      console.log("Suggestions received (previews):", incoming.map((s) => s.preview).join(" | "));
-      console.log("[SUGGESTIONS][HISTORY] length:", (data.suggestion_history || []).length);
-      if (source === "llm") {
-        console.log("Replacing fallback with real suggestions");
-      }
       const newSegmentId = data.current_segment_id ?? 0;
-      console.log("CURRENT SEGMENT:", newSegmentId);
-      console.log("BATCH SEGMENTS:", (data.suggestion_history || []).map((b) => b.segment_id));
 
-      // On topic shift: clear UI only — history must be preserved for segment filtering.
-      if (data.meta?.topic_shift) {
-        setDisplayedSuggestions([]);
-      }
-
-      // Always overwrite current suggestions with latest batch from API.
-      setDisplayedSuggestions(incoming);
       // Update segment id before history so the filter sees the right segment on re-render.
       setCurrentSegmentId(newSegmentId);
+      // Always set latest batch — no pre-clear, UI stays stable until new data is ready.
+      setDisplayedSuggestions(incoming);
       // Append-only: merge new batches by batch_id to avoid duplicates and never reset.
       if (Array.isArray(data.suggestion_history)) {
         setSuggestionHistory((prev) => {
@@ -149,19 +151,26 @@ export default function App() {
       }
       setLatestBatchId(batchId);
 
-      // Interrupt timing intelligence: pull suggestions earlier when strong conversational signals appear.
+      // Early-signal: pull again sooner when a decision/question moment is detected.
       if (data.meta?.early_signal_detected) {
-        window.setTimeout(() => postSuggestions(entries), 9000);
+        window.setTimeout(() => postSuggestionsRef.current(entries), 9000);
       }
       console.log(`[SUGGESTIONS] ${((performance.now() - startedAt) / 1000).toFixed(2)}s`);
     } catch (err) {
       console.error("[SUGGESTIONS][ERROR]", err);
     } finally {
       setSuggestionLoading(false);
+      setIsRefreshing(false);
     }
   };
-  // Always keep the ref pointing at the latest version of the function.
   postSuggestionsRef.current = postSuggestions;
+
+  // Manual refresh: fetch immediately then reset the 30s window so it doesn't
+  // double-fire shortly after.
+  const handleRefresh = () => {
+    postSuggestions(transcript);
+    startRefreshTimer();
+  };
 
   const sendChat = async (message, fromSuggestion = false) => {
     const userMsg = { role: "user", content: message, timestamp: toTimestamp() };
@@ -406,27 +415,24 @@ export default function App() {
     };
   }, [transcript]);
 
-  // 30-second auto-refresh while recording — keeps suggestions alive during pauses.
+  // 30-second auto-refresh while recording.
+  // startRefreshTimer reads isRecordingRef so calling it on recording-start is safe.
   useEffect(() => {
     if (!isRecording) {
-      if (autoRefreshRef.current) {
-        window.clearInterval(autoRefreshRef.current);
-        autoRefreshRef.current = null;
+      if (refreshTimerRef.current) {
+        window.clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
       }
       return;
     }
-    autoRefreshRef.current = window.setInterval(() => {
-      if (transcriptRef.current.length > 0) {
-        postSuggestionsRef.current(transcriptRef.current);
-      }
-    }, 30000);
+    startRefreshTimer();
     return () => {
-      if (autoRefreshRef.current) {
-        window.clearInterval(autoRefreshRef.current);
-        autoRefreshRef.current = null;
+      if (refreshTimerRef.current) {
+        window.clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
       }
     };
-  }, [isRecording]);
+  }, [isRecording]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (finalTranscript) {
@@ -510,8 +516,9 @@ export default function App() {
           suggestionHistory={suggestionHistory}
           currentSegmentId={currentSegmentId}
           onSuggestionClick={(s) => sendChat(s.preview, true)}
-          onRefresh={() => postSuggestions(transcript)}
+          onRefresh={handleRefresh}
           loading={suggestionLoading}
+          isRefreshing={isRefreshing}
           context={context}
           latestBatchId={latestBatchId}
           newBatchPulse={newBatchPulse}
