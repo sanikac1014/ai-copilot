@@ -107,7 +107,10 @@ Browser → Vite proxy /api → FastAPI (backend.main:app)
 - Transcript chunking: `MediaRecorder` stops every 30 seconds, uploads the blob, and immediately restarts. This gives Whisper clean complete utterances rather than mid-sentence fragments.
 - True SSE streaming: `/chat` returns `text/event-stream`. The frontend consumes deltas via `ReadableStream` + `TextDecoder`, so the first token appears in ~300ms. A `meta` event is sent before any text so context/topic-shift state updates instantly. The assistant bubble is created on the first delta (not at send time), so the typing indicator and the message never overlap.
 - Segment isolation: `current_segment_start_idx` + `current_segment_rolling_summary` ensure suggestions and chat always use only current-segment transcript, preventing cross-topic drift on refresh.
-- Stale closure prevention: the 30-second auto-refresh interval uses `useRef` for `postSuggestions` and `transcript` so it always calls with current values.
+- Stale closure prevention: interval callbacks read from `useRef` so they always call with current values.
+- Refresh timer: `startRefreshTimer()` clears and restarts the 30s interval. Called on recording start and on manual refresh — so a manual refresh resets the window and never double-fires.
+- Background fetch: `isRefreshing` (small dot indicator) is separate from `suggestionLoading` (shimmer). After the first load, suggestions are never hidden or dimmed during a refresh; UI updates atomically when new data arrives.
+- Export log: `suggestion_export_log` is an append-only list that is **never cleared** on topic shift (unlike the active `suggestion_history` deque). `/export` reads from this log so all suggestion batches across every segment are present in the downloaded JSON.
 - Reset Chat: clears chat messages only — transcript, suggestions, and settings are unaffected.
 
 ---
