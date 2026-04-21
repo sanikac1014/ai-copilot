@@ -230,13 +230,13 @@ async def suggestions(payload: SuggestionRequest):
         f"[SUGGESTIONS][BATCH_CREATED] batch_id={STATE.latest_batch_id}"
         f" segment_id={STATE.current_segment_id} count={len(suggestion_batch)}"
     )
-    STATE.suggestion_history.append(
-        {
-            "batch_id": STATE.latest_batch_id,
-            "segment_id": STATE.current_segment_id,
-            "suggestions": suggestion_batch,
-        }
-    )
+    batch_entry = {
+        "batch_id": STATE.latest_batch_id,
+        "segment_id": STATE.current_segment_id,
+        "suggestions": suggestion_batch,
+    }
+    STATE.suggestion_history.append(batch_entry)
+    STATE.suggestion_export_log.append(batch_entry)  # permanent — never cleared
     print(f"[SUGGESTIONS][HISTORY_APPENDED] history_length={len(STATE.suggestion_history)}")
 
     early_signal = detect_strong_signal_for_early_suggestion(STATE.transcript_entries)
@@ -373,16 +373,20 @@ async def chat(payload: ChatRequest):
 @router.get("/export")
 async def export_state():
     """Export transcript, rolling summary, segments with linked suggestion batches, and flat suggestion log."""
-    flat_batches = []
-    for b in list(STATE.suggestion_history):
-        flat_batches.append([s.model_dump() for s in b.get("suggestions", [])])
+    # Use the permanent log (never cleared on topic shift) so all segments are represented.
+    export_log = list(STATE.suggestion_export_log)
+
+    flat_batches = [
+        [s.model_dump() for s in b.get("suggestions", [])]
+        for b in export_log
+    ]
 
     segments_out = []
     for seg in STATE.session_segments:
         sid = seg["id"]
         batches = [
             [s.model_dump() for s in b.get("suggestions", [])]
-            for b in STATE.suggestion_history
+            for b in export_log
             if int(b.get("segment_id", -1)) == int(sid)
         ]
         segments_out.append(
@@ -404,7 +408,7 @@ async def export_state():
                 "segment_id": b.get("segment_id"),
                 "suggestions": [s.model_dump() for s in b.get("suggestions", [])],
             }
-            for b in STATE.suggestion_history
+            for b in export_log
         ],
         "chat": [c.model_dump() for c in STATE.chat_history],
         "summary": (

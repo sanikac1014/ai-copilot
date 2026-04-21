@@ -26,6 +26,9 @@ class SessionState:
     chat_history: List[ChatMessage] = field(default_factory=list)
     # Each item: {"batch_id": int, "segment_id": int, "suggestions": List[Suggestion]}
     suggestion_history: Deque[Dict] = field(default_factory=lambda: deque(maxlen=80))
+    # Append-only log of every batch ever generated — never cleared on topic shift.
+    # Used exclusively by /export so evaluators see every suggestion across all segments.
+    suggestion_export_log: List[Dict] = field(default_factory=list)
     rolling_summary: str = ""
     last_primary_focus: str = ""
     last_conversation_type: str = ""
